@@ -123,15 +123,29 @@ def run_research_agent(task: str, max_turns: int = 8) -> dict:
         content = m.content
 
         # Tool-call messages have structured list content
+        if isinstance(content, str): # fix 3
+            try:
+                parsed = json.loads(content)
+                if isinstance(parsed, list):
+                    content = parsed
+            except json.JSONDecodeError:
+                pass
+
         if isinstance(content, list):
             for block in content:
-                if isinstance(block, dict) and block.get("type") == "tool_use":
+                if isinstance(block, str): # fix 3
+                    try:
+                        block = json.loads(block)
+                    except json.JSONDecodeError:
+                        continue
+                if isinstance(block, dict) and block.get("type") in ("tool_use", "function"): # fix 1
                     entry = {
                         "tool": block["name"],
-                        "args": block.get("input", {}),
+                        "args": block.get("parameters", {}), # fix 2
                     }
                     tool_calls_made.append(entry)
                     full_trace.append({"role": "tool_call", **entry})
+
             continue
 
         if content:

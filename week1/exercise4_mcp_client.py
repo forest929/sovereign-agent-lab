@@ -44,6 +44,7 @@ from langchain_openai import ChatOpenAI
 from langgraph.prebuilt import create_react_agent
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
+from pydantic import BaseModel
 
 load_dotenv()
 
@@ -77,6 +78,13 @@ def _make_mcp_caller(tool_name: str, server_script: str):
     call.__name__ = tool_name
     return call
 
+class SearchVenuesArgs(BaseModel):
+    min_capacity: int
+    requires_vegan: bool
+
+
+class GetVenueDetailsArgs(BaseModel):
+    pub_name: str
 
 async def discover_tools(server_script: str) -> list:
     """
@@ -93,10 +101,23 @@ async def discover_tools(server_script: str) -> list:
             raw   = await session.list_tools()
             tools = []
             for t in raw.tools:
+                # lc_tool = StructuredTool.from_function(
+                #     func=_make_mcp_caller(t.name, server_script),
+                #     name=t.name,
+                #     description=t.description or f"MCP tool: {t.name}",
+                # )
+                if t.name == "search_venues":
+                    schema = SearchVenuesArgs
+                elif t.name == "get_venue_details":
+                    schema = GetVenueDetailsArgs
+                else:
+                    schema = None
+
                 lc_tool = StructuredTool.from_function(
                     func=_make_mcp_caller(t.name, server_script),
                     name=t.name,
                     description=t.description or f"MCP tool: {t.name}",
+                    args_schema=schema,
                 )
                 tools.append(lc_tool)
             return tools, [t.name for t in raw.tools]
@@ -111,7 +132,8 @@ def extract_trace(result: dict) -> list:
         content = m.content
         if isinstance(content, list):
             for block in content:
-                if isinstance(block, dict) and block.get("type") == "tool_use":
+                # if isinstance(block, dict) and block.get("type") == "tool_use":
+                if isinstance(block, dict) and block.get("type") in ["tool_use", "function"]: # fix 2
                     trace.append({"role": "tool_call", "tool": block["name"],
                                   "args": block.get("input", {})})
         elif content:
@@ -136,6 +158,7 @@ async def main() -> None:
         base_url="https://api.tokenfactory.nebius.com/v1/",
         api_key=os.getenv("NEBIUS_KEY"),
         model="meta-llama/Llama-3.3-70B-Instruct",
+        # model = "openai/gpt-oss-120b", # fix 3, change the model
         temperature=0,
     )
 
@@ -143,6 +166,7 @@ async def main() -> None:
     print("Discovering tools from mcp_venue_server.py...")
 
     tools, tool_names = await discover_tools(SERVER_SCRIPT)
+    # llm = llm.bind_tools(tools)  # fix 1 - force proper tool calling behaviour
     print(f"\n  Discovered {len(tools)} tools: {tool_names}")
 
     agent  = create_react_agent(llm, tools)
